@@ -8,7 +8,7 @@ import path from "node:path";
 import PDFDocument from "pdfkit";
 import { OUTPUT_DIR, template } from "../config.js";
 import type { GalleryImage, ProposalContext, VideoLink } from "../types.js";
-import { cleanDescription, formatRate, rublesFor, rublesTotalExact } from "../textutils.js";
+import { cleanDescription, formatRate, halfAmounts, rublesFor, rublesTotalExact } from "../textutils.js";
 import {
   eyebrow, footer, hairline, imageCover, label, measure,
 } from "./helpers.js";
@@ -199,24 +199,41 @@ function specsPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
   footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
 }
 
-function paymentPanelHeight(doc: Doc): number {
+function paymentPanelHeight(doc: Doc, schedule?: string[]): number {
   const padX = 26, padY = 24, textW = CW - padX * 2;
   const paras = template.paymentTerms as string[];
   let h = padY + 22;
+  if (schedule && schedule.length) {
+    h += measure(doc, template.paymentScheduleIntro, F.regular, 9, textW, 4) + 8;
+    for (const s of schedule) h += measure(doc, s, F.regular, 9, textW - 14, 4) + 11;
+    h += 6;
+  }
   for (const p of paras) h += measure(doc, p, F.regular, 9, textW, 4) + 9;
   return h + padY - 9;
 }
 
-function drawPaymentPanel(doc: Doc, y: number): number {
+function drawPaymentPanel(doc: Doc, y: number, schedule?: string[]): number {
   const padX = 26, padY = 24, textW = CW - padX * 2;
   const paras = template.paymentTerms as string[];
-  const h = paymentPanelHeight(doc);
+  const h = paymentPanelHeight(doc, schedule);
   doc.save().rect(M, y, CW, h).fillColor(FAINT).fill().restore();
   doc.save().rect(M, y, 2.5, h).fillColor(BRASS).fill().restore();
   let ty = y + padY;
   doc.font(F.medium).fontSize(8).fillColor(GREY);
   doc.text(template.sections.payment, M + padX, ty, { characterSpacing: 2.6 });
   ty += 22;
+  if (schedule && schedule.length) {
+    doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
+    doc.text(template.paymentScheduleIntro, M + padX, ty, { width: textW, lineGap: 4 });
+    ty += measure(doc, template.paymentScheduleIntro, F.regular, 9, textW, 4) + 8;
+    for (const s of schedule) {
+      doc.save().circle(M + padX + 2, ty + 4.5, 1.7).fillColor(BRASS).fill().restore();
+      doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
+      doc.text(s, M + padX + 14, ty, { width: textW - 14, lineGap: 4 });
+      ty += measure(doc, s, F.regular, 9, textW - 14, 4) + 11;
+    }
+    ty += 6;
+  }
   for (const p of paras) {
     doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
     doc.text(p, M + padX, ty, { width: textW, lineGap: 4 });
@@ -378,10 +395,17 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): number {
     y += Math.ceil(present.length / 2) * 58 + 20;
   }
 
+  // two-invoice payment schedule (amounts filled from the internal rate)
+  const ha = halfAmounts(input.price, input.deliveryCost, rate);
+  const schedule = ha
+    ? (template.paymentSchedule as string[]).map((s) =>
+        s.replace(/\{half\}/g, ha.half).replace(/\{rate\}/g, ha.rate).replace(/\{rub\}/g, ha.rub))
+    : undefined;
+
   // delivery + payment panels — spill to a continuation page if they don't fit
   const gap = 18;
   const dH = deliveryPanelHeight(doc);
-  const pH = paymentPanelHeight(doc);
+  const pH = paymentPanelHeight(doc, schedule);
   const limit = PAGE_H - 54;
   let extraPages = 0;
 
@@ -400,7 +424,7 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): number {
   }
 
   py = drawDeliveryPanel(doc, py) + gap;
-  drawPaymentPanel(doc, py);
+  drawPaymentPanel(doc, py, schedule);
 
   footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
   return 1 + extraPages;

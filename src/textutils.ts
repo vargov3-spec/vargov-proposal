@@ -148,3 +148,26 @@ export function rublesTotalExact(
 export function formatRate(usdRub: number): string {
   return usdRub.toFixed(2).replace(".", ",");
 }
+
+const NUM_FMT = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+
+/**
+ * 50% of the contract sum (composition + delivery), for the two-invoice
+ * payment schedule. Returns grouped strings ready for the template.
+ */
+export function halfAmounts(
+  price: string | undefined,
+  delivery: string | undefined,
+  usdRub: number,
+): { half: string; rub: string; rate: string } | undefined {
+  const p = parseMoney(price);
+  if (!p || p.currency !== "USD" || !(usdRub > 0)) return undefined;
+  const d = parseMoney(delivery);
+  const total = p.amount + (d && d.currency === "USD" ? d.amount : 0);
+  const half = total / 2;
+  return {
+    half: NUM_FMT.format(half),
+    rub: NUM_FMT.format(Math.round(half * usdRub)),
+    rate: formatRate(usdRub),
+  };
+}
