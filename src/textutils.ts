@@ -48,14 +48,42 @@ export interface Money {
   currency: string;
 }
 
+const CUR = "USD|EUR|RUB|AED|АЕД|\\$|€|₽|руб\\.?|долл[а-яё.]*|евро";
+
+function normCurrency(raw: string): string {
+  const c = raw.toUpperCase();
+  if (c.includes("$") || c.startsWith("USD") || c.startsWith("ДОЛЛ")) return "USD";
+  if (c.includes("€") || c.startsWith("EUR") || c.startsWith("ЕВРО")) return "EUR";
+  if (c.includes("₽") || c.startsWith("RUB") || c.startsWith("РУБ")) return "RUB";
+  if (c.includes("AED") || c.includes("АЕД")) return "AED";
+  return c;
+}
+
+/**
+ * Parse a hand-typed money string. Tolerant of "$" either side, no thousands
+ * separators, and currency words:  "44 100 USD", "17940$", "$900", "6 000 руб".
+ */
 export function parseMoney(s: string | undefined): Money | undefined {
   if (!s) return undefined;
-  const m = s.match(/([\d\s.,  ]+)\s*(USD|EUR|RUB|АЕД|AED|\$|€|₽|руб\.?)/i);
-  if (!m) return undefined;
-  const digits = m[1].replace(/[^\d]/g, "");
-  if (!digits) return undefined;
-  const cur = m[2].toUpperCase().replace("$", "USD").replace("€", "EUR").replace("₽", "RUB");
-  return { amount: parseInt(digits, 10), currency: cur };
+  let digits: string | undefined;
+  let cur: string | undefined;
+  // amount then currency
+  let m = s.match(new RegExp(`([\\d][\\d\\s.,]*)\\s*(${CUR})`, "i"));
+  if (m) {
+    digits = m[1];
+    cur = m[2];
+  } else {
+    // currency symbol first: "$900", "€1 200"
+    m = s.match(/(\$|€|₽)\s*([\d][\d\s.,]*)/);
+    if (m) {
+      cur = m[1];
+      digits = m[2];
+    }
+  }
+  if (!digits || !cur) return undefined;
+  const n = digits.replace(/[^\d]/g, "");
+  if (!n) return undefined;
+  return { amount: parseInt(n, 10), currency: normCurrency(cur) };
 }
 
 export function formatMoney(m: Money): string {
@@ -69,7 +97,7 @@ export function totalLine(price?: string, delivery?: string): string | undefined
   if (!p) return undefined;
   const d = parseMoney(delivery);
   if (!d) return formatMoney(p);
-  if (d.currency !== p.currency) return undefined;
+  if (d.currency !== p.currency) return formatMoney(p);
   return formatMoney({ amount: p.amount + d.amount, currency: p.currency });
 }
 
