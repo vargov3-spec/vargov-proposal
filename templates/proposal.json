@@ -46,6 +46,13 @@
     "Компания работает без НДС."
   ],
 
+  "delivery": {
+    "heading": "ДОСТАВКА ПО РОССИИ",
+    "intro": "Мы доставляем композицию до Москвы, где перегружаем и отправляем в любой город России транспортными компаниями:",
+    "carriers": ["ТК ПЭК", "ТК KNT", "Magictrans", "Байт Транзит", "ТК Байкалсервис", "ЖелДорЭкспедиция"],
+    "note": "Данную доставку по России вы оплачиваете самостоятельно — при получении или заранее на сайте транспортной компании."
+  },
+
   "internalRate": {
     "USD": 79.5,
     "source": "vargov.ru",
@@ -68,14 +75,22 @@
   "videoNote": "Полная видеогалерея композиций Vargov®Design — на официальных каналах бренда.",
 
   "contacts": {
+    "heading": "Контакты",
     "lines": [
       { "label": "Сайт", "value": "vargov.ru", "url": "https://vargov.ru" },
-      { "label": "Email", "value": "info@vargov.ru" },
-      { "label": "WhatsApp", "value": "+7 916 537 33 52" },
-      { "label": "Telegram", "value": "@AntonVargov" },
+      { "label": "Email", "value": "info@vargov.ru", "url": "mailto:info@vargov.ru" },
+      { "label": "WhatsApp", "value": "+7 916 537 33 52", "url": "https://wa.me/message/SAC5LWOV5QMXC1" },
+      { "label": "Telegram", "value": "@AntonVargov", "url": "https://t.me/AntonVargov" },
       { "label": "WeChat", "value": "Vargov_Design" }
     ],
-    "showroom": "Официальный шоурум — Москва, Нахимовский проспект 24, павильон 2, стенд 212",
-    "socials": "Telegram · YouTube · Pinterest · Instagram · RuTube"
+    "socialsHeading": "Мы в соцсетях",
+    "socials": [
+      { "label": "Telegram-канал", "value": "@vargov_design", "url": "https://t.me/vargov_design" },
+      { "label": "Instagram", "value": "@vargov_design", "url": "https://www.instagram.com/vargov_design" },
+      { "label": "YouTube", "value": "@VargovDesign", "url": "https://www.youtube.com/@VargovDesign" },
+      { "label": "RuTube", "value": "Vargov Design", "url": "https://rutube.ru/channel/38329605" },
+      { "label": "MAX", "value": "Vargov Design", "url": "https://max.ru/u/f9LHodD0cOKS8R9xuJ5s-QYzOAnTOhpJnwQ-JUeew84EywgNxGMRRApysf0" }
+    ],
+    "showroom": "Официальный шоурум — Москва, Нахимовский проспект 24, павильон 2, стенд 212"
   }
 }

@@ -13,7 +13,6 @@ import {
   eyebrow, footer, hairline, imageCover, label, measure,
 } from "./helpers.js";
 import { drawLogo } from "./logo.js";
-import { drawQr } from "../qr.js";
 import {
   BRASS, CW, F, FAINT, FONT_FILES, GRAPHITE, GREY, HAIRLINE, INK,
   M, PAGE_H, PAGE_W,
@@ -200,7 +199,72 @@ function specsPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
   footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
 }
 
-function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
+function paymentPanelHeight(doc: Doc): number {
+  const padX = 26, padY = 24, textW = CW - padX * 2;
+  const paras = template.paymentTerms as string[];
+  let h = padY + 22;
+  for (const p of paras) h += measure(doc, p, F.regular, 9, textW, 4) + 9;
+  return h + padY - 9;
+}
+
+function drawPaymentPanel(doc: Doc, y: number): number {
+  const padX = 26, padY = 24, textW = CW - padX * 2;
+  const paras = template.paymentTerms as string[];
+  const h = paymentPanelHeight(doc);
+  doc.save().rect(M, y, CW, h).fillColor(FAINT).fill().restore();
+  doc.save().rect(M, y, 2.5, h).fillColor(BRASS).fill().restore();
+  let ty = y + padY;
+  doc.font(F.medium).fontSize(8).fillColor(GREY);
+  doc.text(template.sections.payment, M + padX, ty, { characterSpacing: 2.6 });
+  ty += 22;
+  for (const p of paras) {
+    doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
+    doc.text(p, M + padX, ty, { width: textW, lineGap: 4 });
+    ty += measure(doc, p, F.regular, 9, textW, 4) + 9;
+  }
+  return y + h;
+}
+
+function deliveryPanelHeight(doc: Doc): number {
+  const padX = 26, padY = 22, textW = CW - padX * 2;
+  const d = template.delivery;
+  const rows = Math.ceil((d.carriers as string[]).length / 2);
+  let h = padY + 16;
+  h += measure(doc, d.intro, F.regular, 9, textW, 4) + 14;
+  h += rows * 19 + 12;
+  h += measure(doc, d.note, F.regular, 8.5, textW, 3);
+  return h + padY;
+}
+
+function drawDeliveryPanel(doc: Doc, y: number): number {
+  const padX = 26, padY = 22, textW = CW - padX * 2;
+  const d = template.delivery;
+  const carriers = d.carriers as string[];
+  const h = deliveryPanelHeight(doc);
+  doc.save().rect(M, y, CW, h).fillColor(FAINT).fill().restore();
+  doc.save().rect(M, y, 2.5, h).fillColor(BRASS).fill().restore();
+  let ty = y + padY;
+  doc.font(F.medium).fontSize(8).fillColor(GREY);
+  doc.text(d.heading, M + padX, ty, { characterSpacing: 2.6 });
+  ty += 16;
+  doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
+  doc.text(d.intro, M + padX, ty, { width: textW, lineGap: 4 });
+  ty += measure(doc, d.intro, F.regular, 9, textW, 4) + 14;
+  const colW = textW / 2;
+  carriers.forEach((c, i) => {
+    const cx = M + padX + (i % 2) * colW;
+    const cyy = ty + Math.floor(i / 2) * 19;
+    doc.save().circle(cx + 2, cyy + 5, 1.7).fillColor(BRASS).fill().restore();
+    doc.font(F.medium).fontSize(9.5).fillColor(INK);
+    doc.text(c, cx + 11, cyy, { width: colW - 14, lineBreak: false });
+  });
+  ty += Math.ceil(carriers.length / 2) * 19 + 12;
+  doc.font(F.regular).fontSize(8.5).fillColor(GREY);
+  doc.text(d.note, M + padX, ty, { width: textW, lineGap: 3 });
+  return y + h;
+}
+
+function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): number {
   const { input } = ctx;
   doc.addPage({ size: "A4", margin: 0 });
   eyebrow(doc, "03", template.sections.offer);
@@ -248,7 +312,7 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
   row("Размер элементов", input.elementSize ?? ctx.product.elementSizeFromSite);
   row("Количество элементов", input.elementCount);
   moneyRow("Стоимость композиции", input.price);
-  moneyRow("Стоимость доставки", input.deliveryCost);
+  moneyRow("Стоимость доставки до МСК", input.deliveryCost);
 
   if (ctx.totalLine) {
     const rubFinal = rublesTotalExact(input.price, input.deliveryCost, rate);
@@ -296,7 +360,7 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
   // terms grid 2×2
   const terms: [string, string | undefined][] = [
     ["Срок производства", input.productionTime],
-    ["Срок поставки", input.deliveryTime],
+    ["Срок доставки до МСК", input.deliveryTime],
     ["Объём груза", input.cargoVolume],
     ["Вес груза", input.cargoWeight],
   ];
@@ -314,30 +378,32 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
     y += Math.ceil(present.length / 2) * 58 + 20;
   }
 
-  // payment panel pinned to the lower part of the page
-  const paras = template.paymentTerms as string[];
-  const padX = 26;
-  const padY = 24;
-  const textW = CW - padX * 2;
-  let panelH = padY + 22;
-  for (const p of paras) panelH += measure(doc, p, F.regular, 9, textW, 4) + 9;
-  panelH += padY - 9;
+  // delivery + payment panels — spill to a continuation page if they don't fit
+  const gap = 18;
+  const dH = deliveryPanelHeight(doc);
+  const pH = paymentPanelHeight(doc);
+  const limit = PAGE_H - 54;
+  let extraPages = 0;
 
-  const panelY = Math.max(y + 10, PAGE_H - 60 - panelH);
-  doc.save().rect(M, panelY, CW, panelH).fillColor(FAINT).fill().restore();
-  doc.save().rect(M, panelY, 2.5, panelH).fillColor(BRASS).fill().restore();
-
-  let ty = panelY + padY;
-  doc.font(F.medium).fontSize(8).fillColor(GREY);
-  doc.text(template.sections.payment, M + padX, ty, { characterSpacing: 2.6 });
-  ty += 22;
-  for (const p of paras) {
-    doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
-    doc.text(p, M + padX, ty, { width: textW, lineGap: 4 });
-    ty += measure(doc, p, F.regular, 9, textW, 4) + 9;
+  let py: number;
+  if (y + gap + dH + gap + pH <= limit) {
+    py = y + gap;
+  } else {
+    footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
+    doc.addPage({ size: "A4", margin: 0 });
+    eyebrow(doc, "03", template.sections.offer);
+    doc.font(F.light).fontSize(24).fillColor(INK);
+    doc.text("Доставка и условия оплаты", M, 118);
+    py = 174;
+    pageNo += 1;
+    extraPages = 1;
   }
 
+  py = drawDeliveryPanel(doc, py) + gap;
+  drawPaymentPanel(doc, py);
+
   footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
+  return 1 + extraPages;
 }
 
 function linksPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets, pageNo: number): void {
@@ -346,41 +412,30 @@ function linksPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets, pageNo: number
 
   let y = 118;
   doc.font(F.light).fontSize(26).fillColor(INK);
-  doc.text("Материалы онлайн", M, y);
+  doc.text("Ссылки и материалы", M, y);
   y += 40;
   doc.font(F.regular).fontSize(9).fillColor(GREY);
-  doc.text("Наведите камеру телефона на QR-код", M, y);
+  doc.text("Нажмите на ссылку, чтобы открыть её в браузере", M, y);
+  y += 46;
 
-  interface Card { data: string; caption: string; url: string }
-  const cards: Card[] = [
-    { data: qrs.product, caption: template.qrCaptions.product, url: shortUrl(ctx.product.url) },
-    { data: qrs.site, caption: template.qrCaptions.site, url: "vargov.ru" },
+  const KIND_LABEL: Record<string, string> = {
+    youtube: "Видео · YouTube", rutube: "Видео · RuTube", vimeo: "Видео · Vimeo", other: "Видео",
+  };
+  interface Item { label: string; url: string }
+  const items: Item[] = [
+    { label: template.qrCaptions.product, url: qrs.product },
+    { label: template.qrCaptions.site, url: qrs.site },
   ];
-  if (qrs.model3d) {
-    cards.push({ data: qrs.model3d, caption: template.qrCaptions.model3d, url: shortUrl(qrs.model3d) });
-  }
-  qrs.videos.forEach((v, i) => {
-    cards.push({
-      data: v.video.url,
-      caption: qrs.videos.length > 1 ? `${template.qrCaptions.video} ${i + 1}` : template.qrCaptions.video,
-      url: shortUrl(v.video.url),
-    });
-  });
+  if (qrs.model3d) items.push({ label: template.qrCaptions.model3d, url: qrs.model3d });
+  qrs.videos.forEach((v) => items.push({ label: KIND_LABEL[v.video.kind] ?? "Видео", url: v.video.url }));
 
-  const cols = 2;
-  const cellW = CW / cols;
-  const qrSize = 116;
-  const cellH = 208;
-  const top = 220;
-  cards.forEach((card, idx) => {
-    const cx = M + (idx % cols) * cellW;
-    const cy = top + Math.floor(idx / cols) * cellH;
-    drawQr(doc, card.data, cx + (cellW - qrSize) / 2, cy, qrSize);
-    doc.font(F.medium).fontSize(9.5).fillColor(INK);
-    doc.text(card.caption, cx, cy + qrSize + 16, { width: cellW, align: "center" });
-    doc.font(F.regular).fontSize(7.5).fillColor(GREY);
-    doc.text(card.url, cx, cy + qrSize + 32, { width: cellW, align: "center" });
-  });
+  for (const it of items) {
+    label(doc, it.label, M, y);
+    drawLink(doc, displayUrl(it.url), M, y + 14, it.url, { size: 12.5, underline: true });
+    y += 32;
+    hairline(doc, M, y + 4, PAGE_W - M);
+    y += 22;
+  }
 
   footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
 }
@@ -389,105 +444,76 @@ function shortUrl(u: string): string {
   return u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 58);
 }
 
-function videoPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets, pageNo: number): void {
-  if (!qrs.videos.length) return;
-  doc.addPage({ size: "A4", margin: 0 });
-  eyebrow(doc, "05", template.sections.video);
-
-  let y = 118;
-  doc.font(F.light).fontSize(26).fillColor(INK);
-  doc.text("Композиция в движении", M, y);
-  y += 44;
-  doc.font(F.regular).fontSize(9).fillColor(GREY);
-  doc.text(template.videoNote, M, y, { width: CW * 0.82, lineGap: 3 });
-  y += 44;
-
-  const KIND_LABEL: Record<string, string> = {
-    youtube: "YouTube", vimeo: "Vimeo", rutube: "RuTube", other: "Видео",
-  };
-  const isChannel = (u: string) => /\/channel\/|\/@|youtube\.com\/@/.test(u);
-  const titleFor = (v: VideoLink) =>
-    isChannel(v.url)
-      ? `Официальный видеоканал Vargov®Design · ${KIND_LABEL[v.kind]}`
-      : `Видео композиции ${ctx.product.sku} · ${KIND_LABEL[v.kind]}`;
-
-  const videos = qrs.videos.slice(0, 3).map((v) => v.video);
-  const [primary, ...more] = videos;
-
-  // primary — large frame
-  const frameH = 236;
-  if (primary.thumbFile && fs.existsSync(primary.thumbFile)) {
-    imageCover(doc, { file: primary.thumbFile, url: "", width: 1280, height: 720 }, M, y, CW, frameH);
-  } else {
-    doc.save().rect(M, y, CW, frameH).fillColor(INK).fill().restore();
-    doc.font(F.medium).fontSize(8).fillColor("#8a8a8a");
-    doc.text("VARGOV®DESIGN", M, y + frameH - 26, { width: CW, align: "center", characterSpacing: 3 });
-  }
-  const cx = M + CW / 2;
-  const cy = y + frameH / 2;
-  doc.save().circle(cx, cy, 27).fillColor(BRASS).fill().restore();
-  doc.save().moveTo(cx - 6, cy - 10).lineTo(cx + 12, cy).lineTo(cx - 6, cy + 10)
-    .closePath().fillColor("#ffffff").fill().restore();
-
-  y += frameH + 20;
-  doc.font(F.medium).fontSize(10.5).fillColor(INK);
-  doc.text(titleFor(primary), M, y, { lineBreak: false });
-  doc.font(F.regular).fontSize(8).fillColor(GREY);
-  doc.text(shortUrl(primary.url), M, y + 17, { lineBreak: false });
-  drawQr(doc, primary.url, PAGE_W - M - 58, y - 4, 58);
-  y += 78;
-
-  // additional videos — compact rows
-  for (const v of more) {
-    hairline(doc, M, y, PAGE_W - M);
-    y += 18;
-    // gold play chip
-    doc.save().roundedRect(M, y - 2, 40, 40, 3).fillColor(INK).fill().restore();
-    doc.save().moveTo(M + 15, y + 8).lineTo(M + 28, y + 18).lineTo(M + 15, y + 28)
-      .closePath().fillColor(BRASS).fill().restore();
-    doc.font(F.medium).fontSize(10).fillColor(INK);
-    doc.text(titleFor(v), M + 56, y + 2, { lineBreak: false });
-    doc.font(F.regular).fontSize(8).fillColor(GREY);
-    doc.text(shortUrl(v.url), M + 56, y + 19, { lineBreak: false });
-    drawQr(doc, v.url, PAGE_W - M - 44, y - 2, 44);
-    y += 54;
-  }
-
-  footer(doc, FOOTER_LEFT, `${ctx.product.sku} · ${String(pageNo).padStart(2, "0")}`);
+/** Human-friendly link text: strip protocol, trim, ellipsize very long URLs. */
+function displayUrl(u: string): string {
+  const s = u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+  return s.length > 68 ? `${s.slice(0, 66)}…` : s;
 }
+
+/**
+ * Draw clickable link text with an explicit annotation rectangle. Using
+ * doc.link() (rather than the text `link` option) avoids PDFKit computing a
+ * NaN rectangle for centered / non-wrapping text.
+ */
+function drawLink(
+  doc: Doc,
+  text: string,
+  x: number,
+  y: number,
+  url: string,
+  opts: { size: number; color?: string; center?: boolean; underline?: boolean } = { size: 11 },
+): void {
+  const color = opts.color ?? BRASS;
+  doc.font(F.regular).fontSize(opts.size).fillColor(color);
+  const w = doc.widthOfString(text);
+  const lx = opts.center ? M + (CW - w) / 2 : x;
+  doc.text(text, lx, y, { lineBreak: false });
+  if (opts.underline) {
+    doc.save().moveTo(lx, y + opts.size + 1).lineTo(lx + w, y + opts.size + 1)
+      .lineWidth(0.5).strokeColor(color).stroke().restore();
+  }
+  doc.link(lx, y - 1, w, opts.size + 5, url);
+}
+
+interface ContactLine { label: string; value: string; url?: string }
 
 function contactsPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets): void {
   doc.addPage({ size: "A4", margin: 0 });
 
-  const logoH = drawLogo(doc, PAGE_W / 2, 118, 128);
-
+  const c = template.contacts;
+  const logoH = drawLogo(doc, PAGE_W / 2, 92, 116);
   const centered = { width: CW, align: "center" as const };
-  let y = 118 + logoH + 30;
+
+  let y = 92 + logoH + 24;
   doc.font(F.medium).fontSize(8).fillColor(GREY);
-  doc.text(template.sections.contacts, M, y, { ...centered, characterSpacing: 3.4 });
+  doc.text((c.heading as string).toUpperCase(), M, y, { ...centered, characterSpacing: 3.4 });
+  y += 28;
 
-  y += 34;
-  for (const line of template.contacts.lines as { label: string; value: string }[]) {
-    doc.font(F.medium).fontSize(6.8).fillColor(GREY);
+  const contactRow = (line: ContactLine) => {
+    doc.font(F.medium).fontSize(6.6).fillColor(GREY);
     doc.text(line.label.toUpperCase(), M, y, { ...centered, characterSpacing: 2 });
-    doc.font(F.regular).fontSize(12).fillColor(INK);
-    doc.text(line.value, M, y + 12, centered);
-    y += 46;
-  }
+    if (line.url) {
+      drawLink(doc, line.value, M, y + 11, line.url, { size: 11.5, center: true });
+    } else {
+      doc.font(F.regular).fontSize(11.5).fillColor(INK);
+      doc.text(line.value, M, y + 11, centered);
+    }
+    y += 35;
+  };
 
-  y += 8;
+  for (const line of c.lines as ContactLine[]) contactRow(line);
+
+  y += 4;
   hairline(doc, PAGE_W / 2 - 20, y, PAGE_W / 2 + 20);
-  y += 20;
-  doc.font(F.regular).fontSize(8.5).fillColor(GRAPHITE);
-  doc.text(template.contacts.showroom, M, y, centered);
   y += 18;
-  doc.font(F.regular).fontSize(8).fillColor(GREY);
-  doc.text(template.contacts.socials, M, y, centered);
-
-  const qrSize = 84;
-  drawQr(doc, qrs.site, (PAGE_W - qrSize) / 2, PAGE_H - 178, qrSize);
   doc.font(F.medium).fontSize(7.5).fillColor(GREY);
-  doc.text("VARGOV.RU", M, PAGE_H - 82, { ...centered, characterSpacing: 2.4 });
+  doc.text((c.socialsHeading as string).toUpperCase(), M, y, { ...centered, characterSpacing: 3 });
+  y += 22;
+  for (const line of c.socials as ContactLine[]) contactRow(line);
+
+  y += 6;
+  doc.font(F.regular).fontSize(8.5).fillColor(GRAPHITE);
+  doc.text(c.showroom as string, M, y, centered);
 
   const by = PAGE_H - 56;
   hairline(doc, M, by, PAGE_W - M);
@@ -528,9 +554,8 @@ export async function buildPdf(ctx: ProposalContext, qrs: QrAssets): Promise<str
   let pageNo = 3;
   pageNo = photoPages(doc, ctx, pageNo);
   specsPage(doc, ctx, pageNo++);
-  offerPage(doc, ctx, pageNo++);
+  pageNo += offerPage(doc, ctx, pageNo);
   linksPage(doc, ctx, qrs, pageNo++);
-  videoPage(doc, ctx, qrs, pageNo++);
   contactsPage(doc, ctx, qrs);
 
   doc.end();
