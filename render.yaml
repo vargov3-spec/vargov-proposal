@@ -1,0 +1,14 @@
+# One-click deploy config for Render (https://render.com).
+# In the Render dashboard: New → Blueprint → point at this repo/subfolder.
+services:
+  - type: web
+    name: vargov-proposal
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: NO_BROWSER
+        value: "1"
+    healthCheckPath: /

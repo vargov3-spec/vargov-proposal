@@ -1,0 +1,8 @@
+node_modules
+cache
+output
+.preview
+*.log
+npm-debug.log*
+.git
+.gitignore

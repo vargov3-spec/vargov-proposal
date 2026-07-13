@@ -1,0 +1,105 @@
+/** Text utilities: description cleanup, money math, Russian dates. */
+
+const MONTHS_RU = [
+  "января", "февраля", "марта", "апреля", "мая", "июня",
+  "июля", "августа", "сентября", "октября", "ноября", "декабря",
+];
+
+export function formatDateRu(d = new Date()): string {
+  return `${d.getDate()} ${MONTHS_RU[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * The vargov.ru product cards mix the actual description with ordering
+ * boilerplate (WhatsApp CTA, element size, 3D-model download line, warranty).
+ * Pull those service fragments out — they live in other blocks of the PDF —
+ * and keep the descriptive text itself.
+ */
+export function cleanDescription(raw: string): { text: string; warranty?: string } {
+  let s = ` ${raw} `;
+
+  let warranty: string | undefined;
+  const wm = s.match(/Гарантия распространяется[^.]*?(?=(Размер элемента|3D модель|$))/i);
+  if (wm) {
+    warranty = wm[0].trim().replace(/\s+/g, " ");
+    s = s.replace(wm[0], " ");
+  }
+
+  s = s
+    .replace(/Для расчета[\s\S]*?WhatsApp/gi, " ")
+    // "Размер элемента: W250мм, L400мм" — greedily swallow every dimension token
+    .replace(/Размер\s+элемент[а-яё]*\s*:?\s*(?:[WLHDВГШ]?\s?\d+\s?мм[\s,;]*)+/gi, " ")
+    .replace(/3D\s*модель[\s\S]*?скачать\s*3d\s*модель/gi, " ")
+    .replace(/скачать\s*3d\s*модель/gi, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // sentence-terminate fragments that lost their punctuation
+  if (s && !/[.!?…]$/.test(s)) s += ".";
+  // "заказ Гарантия" style seams → add missing full stops between glued sentences
+  s = s.replace(/([а-яё])\s+(?=[А-ЯЁ])/g, "$1. ");
+
+  return { text: s, warranty };
+}
+
+export interface Money {
+  amount: number;
+  currency: string;
+}
+
+export function parseMoney(s: string | undefined): Money | undefined {
+  if (!s) return undefined;
+  const m = s.match(/([\d\s.,  ]+)\s*(USD|EUR|RUB|АЕД|AED|\$|€|₽|руб\.?)/i);
+  if (!m) return undefined;
+  const digits = m[1].replace(/[^\d]/g, "");
+  if (!digits) return undefined;
+  const cur = m[2].toUpperCase().replace("$", "USD").replace("€", "EUR").replace("₽", "RUB");
+  return { amount: parseInt(digits, 10), currency: cur };
+}
+
+export function formatMoney(m: Money): string {
+  const grouped = m.amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${grouped} ${m.currency}`;
+}
+
+/** "44 100 USD" + "6 000 USD" -> "50 100 USD" (only when currencies match). */
+export function totalLine(price?: string, delivery?: string): string | undefined {
+  const p = parseMoney(price);
+  if (!p) return undefined;
+  const d = parseMoney(delivery);
+  if (!d) return formatMoney(p);
+  if (d.currency !== p.currency) return undefined;
+  return formatMoney({ amount: p.amount + d.amount, currency: p.currency });
+}
+
+const RUB_FMT = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+
+export function formatRub(amount: number): string {
+  return `${RUB_FMT.format(Math.round(amount))} ₽`;
+}
+
+/** Convert a money string to a "≈ 3 505 950 ₽" line using the internal USD rate. */
+export function rublesFor(money: string | undefined, usdRub: number): string | undefined {
+  const m = parseMoney(money);
+  if (!m || m.currency !== "USD" || !(usdRub > 0)) return undefined;
+  return `≈ ${formatRub(m.amount * usdRub)}`;
+}
+
+/** RUB equivalent of two money strings summed (price + delivery). */
+export function rublesForTotal(
+  price: string | undefined,
+  delivery: string | undefined,
+  usdRub: number,
+): string | undefined {
+  const p = parseMoney(price);
+  if (!p || p.currency !== "USD" || !(usdRub > 0)) return undefined;
+  const d = parseMoney(delivery);
+  const sum = p.amount + (d && d.currency === "USD" ? d.amount : 0);
+  return `≈ ${formatRub(sum * usdRub)}`;
+}
+
+/** Format the internal rate for notes, ru-style decimal: 79.5 -> "79,50". */
+export function formatRate(usdRub: number): string {
+  return usdRub.toFixed(2).replace(".", ",");
+}
