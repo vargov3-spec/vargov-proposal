@@ -8,7 +8,7 @@ import path from "node:path";
 import PDFDocument from "pdfkit";
 import { OUTPUT_DIR, template } from "../config.js";
 import type { GalleryImage, ProposalContext, VideoLink } from "../types.js";
-import { cleanDescription, formatRate, rublesFor, rublesForTotal } from "../textutils.js";
+import { cleanDescription, formatRate, rublesFor, rublesTotalExact } from "../textutils.js";
 import {
   eyebrow, footer, hairline, imageCover, label, measure,
 } from "./helpers.js";
@@ -251,23 +251,37 @@ function offerPage(doc: Doc, ctx: ProposalContext, pageNo: number): void {
   moneyRow("Стоимость доставки", input.deliveryCost);
 
   if (ctx.totalLine) {
+    const rubFinal = rublesTotalExact(input.price, input.deliveryCost, rate);
     y += 6;
     doc.save().moveTo(M, y - 4).lineTo(PAGE_W - M, y - 4).lineWidth(1.2).strokeColor(BRASS).stroke().restore();
-    y += 10;
-    doc.font(F.semibold).fontSize(9).fillColor(INK);
-    doc.text("ИТОГО", M, y + 7, { characterSpacing: 2.4, lineBreak: false });
-    doc.font(F.semibold).fontSize(19).fillColor(INK);
-    const w = doc.widthOfString(ctx.totalLine);
-    doc.text(ctx.totalLine, PAGE_W - M - w, y, { lineBreak: false });
-    const rubTotal = rublesForTotal(input.price, input.deliveryCost, rate);
-    if (rubTotal) {
-      doc.font(F.regular).fontSize(10).fillColor(GRAPHITE);
-      const rw = doc.widthOfString(rubTotal);
-      doc.text(rubTotal, PAGE_W - M - rw, y + 26, { lineBreak: false });
-      y += 56;
+    y += 12;
+
+    if (rubFinal) {
+      // Payment is made in rubles by the internal rate — so the ruble sum is the
+      // hero final amount; USD stands above it as a reference subtotal.
+      doc.font(F.medium).fontSize(8).fillColor(GREY);
+      doc.text("ИТОГО", M, y + 4, { characterSpacing: 2.4, lineBreak: false });
+      doc.font(F.medium).fontSize(12).fillColor(GRAPHITE);
+      const uw = doc.widthOfString(ctx.totalLine);
+      doc.text(ctx.totalLine, PAGE_W - M - uw, y, { lineBreak: false });
+      y += 30;
+
+      doc.font(F.semibold).fontSize(9).fillColor(INK);
+      doc.text("ИТОГО К ОПЛАТЕ, ₽", M, y + 11, { characterSpacing: 2, lineBreak: false });
+      doc.font(F.semibold).fontSize(23).fillColor(INK);
+      const rw = doc.widthOfString(rubFinal);
+      doc.text(rubFinal, PAGE_W - M - rw, y, { lineBreak: false });
+      y += 50;
     } else {
-      y += 46;
+      // No usable rate — show the USD total prominently.
+      doc.font(F.semibold).fontSize(9).fillColor(INK);
+      doc.text("ИТОГО", M, y + 7, { characterSpacing: 2.4, lineBreak: false });
+      doc.font(F.semibold).fontSize(19).fillColor(INK);
+      const w = doc.widthOfString(ctx.totalLine);
+      doc.text(ctx.totalLine, PAGE_W - M - w, y, { lineBreak: false });
+      y += 44;
     }
+
     // internal-rate note
     if (rate > 0) {
       doc.font(F.regular).fontSize(7.6).fillColor(GREY);

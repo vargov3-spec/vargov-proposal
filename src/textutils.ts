@@ -99,6 +99,23 @@ export function rublesForTotal(
   return `≈ ${formatRub(sum * usdRub)}`;
 }
 
+/**
+ * The final payable sum in rubles (price + delivery), without the "≈" — this is
+ * the amount the client actually pays, fixed by the internal rate for 48h.
+ * Returns e.g. "3 982 950 ₽".
+ */
+export function rublesTotalExact(
+  price: string | undefined,
+  delivery: string | undefined,
+  usdRub: number,
+): string | undefined {
+  const p = parseMoney(price);
+  if (!p || p.currency !== "USD" || !(usdRub > 0)) return undefined;
+  const d = parseMoney(delivery);
+  const sum = p.amount + (d && d.currency === "USD" ? d.amount : 0);
+  return formatRub(sum * usdRub);
+}
+
 /** Format the internal rate for notes, ru-style decimal: 79.5 -> "79,50". */
 export function formatRate(usdRub: number): string {
   return usdRub.toFixed(2).replace(".", ",");
