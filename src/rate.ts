@@ -1,18 +1,26 @@
 /**
  * Vargov®Design internal USD→RUB rate.
  *
- * The company publishes a single internal exchange rate on the vargov.ru
- * homepage (a "внутренний курс USD 79.50" widget). We read it straight from the
- * server-rendered HTML — it sits in a <strong> next to the "внутренний курс"
- * label, so a plain HTTPS request is enough (works in the browser-free cloud
- * build too). Cached for a day; falls back to the value in proposal.json.
+ * The company publishes one internal rate in the vargov.ru header — currently
+ * rendered as "USD 81.1" with the note «Внутренний курс компании, обновляется
+ * автоматически ежедневно в 12:00 по МСК».
+ *
+ * The value is present in the server-rendered HTML, so a plain HTTPS request is
+ * enough (works in the browser-free cloud build).
+ *
+ * Parsing is deliberately markup-agnostic: the HTML is stripped to plain text
+ * first, then the number is read next to "USD" (or near the word «курс»). An
+ * earlier version keyed off a specific `<strong>` wrapper and silently fell back
+ * to a hard-coded rate once the site was redesigned — hence the tag-free
+ * approach and the loud warning when a live read fails.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { CACHE_DIR, USER_AGENT, template } from "./config.js";
 
 const CACHE_FILE = path.join(CACHE_DIR, "rate.json");
-const MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h
+/** The site refreshes the rate daily at 12:00 MSK — keep our copy fresh. */
+const MAX_AGE_MS = 60 * 60 * 1000; // 1h
 const HOMEPAGE = "https://vargov.ru/";
 
 export interface Rate {
@@ -21,24 +29,65 @@ export interface Rate {
   fetchedAt: string;
 }
 
-function fallback(): number {
+function fallbackRate(): number {
   const r = Number(template.internalRate?.USD);
-  return Number.isFinite(r) && r > 0 ? r : 79.5;
+  return Number.isFinite(r) && r > 0 ? r : 81.1;
 }
 
-function parseRate(html: string): number | undefined {
-  // label "внутренний курс" then a nearby <strong>USD 79.50</strong>
-  let m = html.match(/внутренн[\s\S]{0,400}?<strong[^>]*>\s*USD\s*([\d]+[.,]?\d*)/i);
-  if (!m) m = html.match(/USD\s*([\d]+[.,]\d{1,2})\s*<\/strong>/i);
-  if (!m) return undefined;
-  const v = parseFloat(m[1].replace(",", "."));
-  return Number.isFinite(v) && v > 10 && v < 1000 ? v : undefined;
+function stripTags(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+}
+
+function toNumber(raw: string): number | undefined {
+  const n = parseFloat(raw.replace(/\s+/g, "").replace(",", "."));
+  // plausible RUB-per-USD band; guards against picking up random page numbers
+  return Number.isFinite(n) && n >= 10 && n <= 1000 ? n : undefined;
+}
+
+/** Number with optional decimals, tolerant of spaces introduced by tag stripping. */
+const AMOUNT = "(\\d{2,3}(?:\\s*[.,]\\s*\\d{1,2})?)";
+
+export function parseRate(html: string): number | undefined {
+  const text = stripTags(html);
+
+  // 1) the canonical form on the site: "USD 81.1" (previously "USD 79.50")
+  const direct = text.match(new RegExp(`USD\\s*${AMOUNT}`, "i"));
+  if (direct) {
+    const v = toNumber(direct[1]);
+    if (v) return v;
+  }
+
+  // 2) any number close to the word «курс» (markup/wording may shift again)
+  const kurs = text.search(/внутренн\w*\s+курс|курс/i);
+  if (kurs >= 0) {
+    const window = text.slice(Math.max(0, kurs - 200), kurs + 260);
+    const near =
+      window.match(new RegExp(`USD\\s*${AMOUNT}`, "i")) ??
+      window.match(new RegExp(`${AMOUNT}\\s*(?:₽|руб)`, "i")) ??
+      window.match(new RegExp(AMOUNT));
+    if (near) {
+      const v = toNumber(near[1]);
+      if (v) return v;
+    }
+  }
+
+  // 3) last resort: "$ 81.1" anywhere
+  const dollar = text.match(new RegExp(`\\$\\s*${AMOUNT}`));
+  if (dollar) return toNumber(dollar[1]);
+
+  return undefined;
 }
 
 async function fetchLive(): Promise<number | undefined> {
   try {
     const res = await fetch(HOMEPAGE, {
-      headers: { "User-Agent": USER_AGENT },
+      headers: { "User-Agent": USER_AGENT, "Cache-Control": "no-cache" },
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return undefined;
@@ -58,7 +107,9 @@ function readCache(): Rate | undefined {
   return undefined;
 }
 
-export async function getUsdRubRate(opts: { refresh?: boolean; log?: (m: string) => void } = {}): Promise<Rate> {
+export async function getUsdRubRate(
+  opts: { refresh?: boolean; log?: (m: string) => void } = {},
+): Promise<Rate> {
   const log = opts.log ?? (() => {});
   if (!opts.refresh) {
     const cached = readCache();
@@ -71,13 +122,16 @@ export async function getUsdRubRate(opts: { refresh?: boolean; log?: (m: string)
   const live = await fetchLive();
   const rate: Rate = live
     ? { usdRub: live, source: "live", fetchedAt: new Date().toISOString() }
-    : { usdRub: fallback(), source: "fallback", fetchedAt: new Date().toISOString() };
+    : { usdRub: fallbackRate(), source: "fallback", fetchedAt: new Date().toISOString() };
 
-  log(
-    rate.source === "live"
-      ? `Внутренний курс с vargov.ru: 1 USD = ${rate.usdRub} ₽`
-      : `Внутренний курс недоступен на сайте — использую сохранённый: 1 USD = ${rate.usdRub} ₽`,
-  );
+  if (rate.source === "live") {
+    log(`Внутренний курс с vargov.ru: 1 USD = ${rate.usdRub} ₽`);
+  } else {
+    log(
+      `ВНИМАНИЕ: не удалось прочитать курс с vargov.ru — использую запасное значение ` +
+        `1 USD = ${rate.usdRub} ₽. Проверьте, не изменилась ли вёрстка сайта.`,
+    );
+  }
 
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });

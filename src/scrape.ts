@@ -209,11 +209,23 @@ function fromLocalRecord(rec: LocalRecord): ProductData {
   };
 }
 
+/**
+ * Canonical product page on the redesigned vargov.ru: /catalog/<sku lowercase>
+ * (e.g. https://vargov.ru/catalog/lc0537). The old Tilda URLs still redirect
+ * here, but the proposal should print the clean, current address.
+ */
+export function canonicalProductUrl(sku: string): string {
+  return `https://vargov.ru/catalog/${sku.trim().toLowerCase()}`;
+}
+
 export async function getProduct(sku: string, opts: { refresh?: boolean } = {}): Promise<ProductData> {
   const cacheFile = path.join(cacheDirFor(sku), "product.json");
   if (!opts.refresh && fs.existsSync(cacheFile)) {
     console.log("  Данные о композиции взяты из кэша.");
-    return JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+    const cached = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as ProductData;
+    // caches written before the site redesign still hold old Tilda URLs
+    cached.url = canonicalProductUrl(cached.sku || sku);
+    return cached;
   }
 
   const localRec = loadLocalDataset().find(
@@ -241,6 +253,8 @@ export async function getProduct(sku: string, opts: { refresh?: boolean } = {}):
   // enrich from local record / caches
   if (localRec?.category_ru) product.categoryRu = localRec.category_ru;
   if (!product.gallery.length && localRec) product.gallery = localRec.gallery ?? [];
+  // always advertise the current site address, whatever URL we scraped from
+  product.url = canonicalProductUrl(product.sku || sku);
 
   const videoCache = loadJsonMap(LOCAL_VIDEOS);
   const cachedVideo = videoCache[sku.toUpperCase()];

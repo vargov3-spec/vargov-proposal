@@ -443,7 +443,10 @@ function linksPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets, pageNo: number
   y += 46;
 
   const KIND_LABEL: Record<string, string> = {
-    youtube: "Видео · YouTube", rutube: "Видео · RuTube", vimeo: "Видео · Vimeo", other: "Видео",
+    youtube: "Видео · YouTube",
+    rutube: "Видео · RuTube",
+    vimeo: "Видео · Vimeo",
+    other: "Видеотека Vargov®Design",
   };
   interface Item { label: string; url: string }
   const items: Item[] = [

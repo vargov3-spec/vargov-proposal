@@ -36,7 +36,8 @@
   },
 
   "brandVideo": [
-    { "url": "https://www.youtube.com/@VargovDesign", "kind": "youtube" },
+    { "url": "https://vargov.ru/video", "kind": "other" },
+    { "url": "https://www.youtube.com/channel/UCKvjqNdKMn4fk95wNc765MA", "kind": "youtube" },
     { "url": "https://rutube.ru/channel/38329605/", "kind": "rutube" }
   ],
 
@@ -60,9 +61,10 @@
   },
 
   "internalRate": {
-    "USD": 79.5,
+    "USD": 81.1,
     "source": "vargov.ru",
-    "updated": "2026-07-09"
+    "updated": "2026-07-16",
+    "note": "Запасное значение на случай недоступности сайта. Живой курс читается с главной vargov.ru при каждой генерации."
   },
   "rateNote": "Пересчёт в рубли по внутреннему курсу компании: 1 USD = {rate} ₽ (vargov.ru). В связи с постоянно меняющимся курсом доллара предложение в рублях действительно 48 часов с даты формирования.",
 
@@ -85,18 +87,18 @@
     "lines": [
       { "label": "Сайт", "value": "vargov.ru", "url": "https://vargov.ru" },
       { "label": "Email", "value": "info@vargov.ru", "url": "mailto:info@vargov.ru" },
-      { "label": "WhatsApp", "value": "+7 916 537 33 52", "url": "https://wa.me/message/SAC5LWOV5QMXC1" },
+      { "label": "Телефон", "value": "+7 916 537 33 52", "url": "tel:+79165373352" },
+      { "label": "WhatsApp", "value": "+7 916 537 33 52", "url": "https://wa.me/79165373352" },
       { "label": "Telegram", "value": "@AntonVargov", "url": "https://t.me/AntonVargov" },
+      { "label": "Telegram бренда", "value": "@vargov_design", "url": "https://t.me/vargov_design" },
       { "label": "WeChat", "value": "Vargov_Design" }
     ],
-    "socialsHeading": "Мы в соцсетях",
+    "socialsHeading": "Каналы и сервисы",
     "socials": [
-      { "label": "Telegram-канал", "value": "@vargov_design", "url": "https://t.me/vargov_design" },
-      { "label": "Instagram", "value": "@vargov_design", "url": "https://www.instagram.com/vargov_design" },
-      { "label": "YouTube", "value": "@VargovDesign", "url": "https://www.youtube.com/@VargovDesign" },
-      { "label": "RuTube", "value": "Vargov Design", "url": "https://rutube.ru/channel/38329605" },
-      { "label": "MAX", "value": "Vargov Design", "url": "https://max.ru/u/f9LHodD0cOKS8R9xuJ5s-QYzOAnTOhpJnwQ-JUeew84EywgNxGMRRApysf0" }
+      { "label": "YouTube", "value": "Vargov Design", "url": "https://www.youtube.com/channel/UCKvjqNdKMn4fk95wNc765MA" },
+      { "label": "RuTube", "value": "Vargov Design", "url": "https://rutube.ru/channel/38329605/" },
+      { "label": "3D-конфигуратор", "value": "configurator.vargov.ru", "url": "https://configurator.vargov.ru/" }
     ],
-    "showroom": "Официальный шоурум — Москва, Нахимовский проспект 24, павильон 2, стенд 212"
+    "showroom": "Официальный шоу-рум — Москва, Нахимовский проспект 24, павильон 2, стенд 212 · ежедневно 12:00–20:00"
   }
 }
