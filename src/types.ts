@@ -40,6 +40,21 @@ export interface CommercialInput {
   cargoWeight?: string;
 }
 
+/** One composition inside a multi-position proposal. */
+export interface Position {
+  input: CommercialInput;
+  product: ProductData;
+  image: GalleryImage;
+  /** "3 850 USD" style total for this position (composition + its delivery). */
+  totalLine?: string;
+}
+
+export interface MultiProposalContext {
+  positions: Position[];
+  usdRub?: number;
+  date: string;
+}
+
 export interface ProposalContext {
   product: ProductData;
   input: CommercialInput;

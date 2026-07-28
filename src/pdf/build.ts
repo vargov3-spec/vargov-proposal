@@ -7,8 +7,13 @@ import fs from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { OUTPUT_DIR, template } from "../config.js";
-import type { GalleryImage, ProposalContext, VideoLink } from "../types.js";
-import { cleanDescription, formatRate, halfAmounts, rublesFor, rublesTotalExact } from "../textutils.js";
+import type {
+  GalleryImage, MultiProposalContext, Position, ProposalContext, VideoLink,
+} from "../types.js";
+import {
+  cleanDescription, formatMoney, formatRate, formatRub, halfAmounts, halfAmountsOf,
+  pluralRu, rublesFor, rublesTotalExact, sumUsd,
+} from "../textutils.js";
 import {
   eyebrow, footer, hairline, imageCover, label, measure,
 } from "./helpers.js";
@@ -31,39 +36,74 @@ const FOOTER_LEFT = "VARGOV®DESIGN · ИНДИВИДУАЛЬНОЕ КОММЕР
 
 // --------------------------------------------------------------------- pages
 
-function coverPage(doc: Doc, ctx: ProposalContext): void {
+/**
+ * Cover — light and print-friendly, using the vargov.ru palette (warm neutrals,
+ * brand gold) and its Montserrat weights. Works for a single composition and
+ * for a multi-position proposal (then `big` is the count and `subText` lists
+ * the articles).
+ */
+function coverCommon(
+  doc: Doc,
+  o: {
+    hero: GalleryImage;
+    eyebrow: string;
+    big: string;
+    bigSize?: number;
+    bigSpacing?: number;
+    subText?: string;
+    date: string;
+  },
+): void {
   doc.addPage({ size: "A4", margin: 0 });
 
   drawLogo(doc, PAGE_W / 2, 46, 104);
 
-  imageCover(doc, ctx.hero, M, 172, CW, 424);
+  imageCover(doc, o.hero, M, 172, CW, 424);
 
   const centered = { width: CW, align: "center" as const };
   let y = 632;
   doc.font(F.medium).fontSize(8).fillColor(GREY);
-  doc.text((ctx.product.title || template.cover.eyebrow).toUpperCase(), M, y, {
-    ...centered, characterSpacing: 3.4,
-  });
+  doc.text(o.eyebrow.toUpperCase(), M, y, { ...centered, characterSpacing: 3.4 });
 
   y += 26;
-  doc.font(F.light).fontSize(52).fillColor(INK);
-  doc.text(ctx.product.sku, M, y, { ...centered, characterSpacing: 10 });
+  const size = o.bigSize ?? 52;
+  const spacing = o.bigSpacing ?? 10;
+  doc.font(F.light).fontSize(size).fillColor(INK);
+  // measure the real block height — the headline may wrap to several lines
+  const bigH = doc.heightOfString(o.big, { ...centered, characterSpacing: spacing });
+  doc.text(o.big, M, y, { ...centered, characterSpacing: spacing });
+  y += bigH + 16;
 
-  y += 78;
+  if (o.subText) {
+    doc.font(F.regular).fontSize(10).fillColor(BRASS);
+    const subH = doc.heightOfString(o.subText, { ...centered, characterSpacing: 2.4 });
+    doc.text(o.subText, M, y, { ...centered, characterSpacing: 2.4 });
+    y += subH + 12;
+  }
+
   doc.font(F.regular).fontSize(9).fillColor(GREY);
-  doc.text(template.tagline, M, y, { ...centered, characterSpacing: 0.6 });
+  doc.text(template.tagline, M, Math.min(y + 4, PAGE_H - 106), { ...centered, characterSpacing: 0.6 });
 
   const by = PAGE_H - 56;
   hairline(doc, M, by, PAGE_W - M);
   doc.font(F.medium).fontSize(7).fillColor(GRAPHITE);
   doc.text(template.docTitle.toUpperCase(), M, by + 10, { characterSpacing: 1.6, lineBreak: false });
-  const dateW = doc.widthOfString(ctx.date.toUpperCase(), { characterSpacing: 1.6 });
-  doc.text(ctx.date.toUpperCase(), PAGE_W - M - dateW, by + 10, {
+  const dateW = doc.widthOfString(o.date.toUpperCase(), { characterSpacing: 1.6 });
+  doc.text(o.date.toUpperCase(), PAGE_W - M - dateW, by + 10, {
     characterSpacing: 1.6, lineBreak: false,
   });
 }
 
-function companyPage(doc: Doc, ctx: ProposalContext): void {
+function coverPage(doc: Doc, ctx: ProposalContext): void {
+  coverCommon(doc, {
+    hero: ctx.hero,
+    eyebrow: ctx.product.title || template.cover.eyebrow,
+    big: ctx.product.sku,
+    date: ctx.date,
+  });
+}
+
+function companyPage(doc: Doc, footerRef: string): void {
   const c = template.company;
   doc.addPage({ size: "A4", margin: 0 });
   eyebrow(doc, "01", template.sections.company);
@@ -104,7 +144,7 @@ function companyPage(doc: Doc, ctx: ProposalContext): void {
     });
   }
 
-  footer(doc, FOOTER_LEFT, `${ctx.product.sku} · 02`);
+  footer(doc, FOOTER_LEFT, `${footerRef} · 02`);
 }
 
 function photoPages(doc: Doc, ctx: ProposalContext, startPage: number): number {
@@ -504,7 +544,7 @@ function drawLink(
 
 interface ContactLine { label: string; value: string; url?: string }
 
-function contactsPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets): void {
+function contactsPage(doc: Doc): void {
   doc.addPage({ size: "A4", margin: 0 });
 
   const c = template.contacts;
@@ -554,6 +594,344 @@ function contactsPage(doc: Doc, ctx: ProposalContext, qrs: QrAssets): void {
   doc.text(t, PAGE_W - M - tw, by + 10.5, { characterSpacing: 1.2, lineBreak: false });
 }
 
+// ------------------------------------------------- multi-position proposal
+
+/** One composition per page: photo, article, specs and its own money block. */
+function positionPage(
+  doc: Doc,
+  pos: Position,
+  index: number,
+  total: number,
+  rate: number,
+  pageNo: number,
+): void {
+  const { input, product, image } = pos;
+  doc.addPage({ size: "A4", margin: 0 });
+  eyebrow(doc, String(index + 1).padStart(2, "0"), `ПОЗИЦИЯ ${index + 1} ИЗ ${total}`);
+
+  imageCover(doc, image, M, 108, CW, 300);
+
+  let y = 430;
+  doc.font(F.light).fontSize(30).fillColor(INK);
+  doc.text(product.sku, M, y, { characterSpacing: 3, lineBreak: false });
+  doc.font(F.regular).fontSize(10.5).fillColor(GREY);
+  const t = product.title || "Композиция";
+  const tw = doc.widthOfString(t);
+  doc.text(t, PAGE_W - M - tw, y + 12, { lineBreak: false });
+  y += 44;
+  doc.save().moveTo(M, y).lineTo(M + 34, y).lineWidth(1.4).strokeColor(BRASS).stroke().restore();
+  y += 22;
+
+  // specs
+  const specs: [string, string | undefined][] = [
+    ["Размер композиции", input.compositionSize],
+    ["Размер элементов", input.elementSize ?? product.elementSizeFromSite],
+    ["Количество элементов", input.elementCount],
+  ];
+  for (const [name, value] of specs) {
+    if (!value) continue;
+    label(doc, name, M, y + 3);
+    doc.font(F.regular).fontSize(10.5).fillColor(INK);
+    const w = doc.widthOfString(value);
+    doc.text(value, PAGE_W - M - w, y, { lineBreak: false });
+    y += 26;
+    hairline(doc, M, y - 7, PAGE_W - M);
+  }
+
+  // money
+  const money = (name: string, value?: string) => {
+    if (!value) return;
+    label(doc, name, M, y + 5);
+    doc.font(F.medium).fontSize(11.5).fillColor(INK);
+    const w = doc.widthOfString(value);
+    doc.text(value, PAGE_W - M - w, y + 1, { lineBreak: false });
+    const rub = rublesFor(value, rate);
+    if (rub) {
+      doc.font(F.regular).fontSize(8).fillColor(GREY);
+      const rw = doc.widthOfString(rub);
+      doc.text(rub, PAGE_W - M - rw, y + 16, { lineBreak: false });
+      y += 40;
+    } else {
+      y += 28;
+    }
+    hairline(doc, M, y - 7, PAGE_W - M);
+  };
+  money("Стоимость композиции", input.price);
+  money("Стоимость доставки до МСК", input.deliveryCost);
+
+  if (pos.totalLine) {
+    y += 4;
+    doc.save().moveTo(M, y).lineTo(PAGE_W - M, y).lineWidth(1).strokeColor(BRASS).stroke().restore();
+    y += 12;
+    doc.font(F.semibold).fontSize(8).fillColor(INK);
+    doc.text("ИТОГО ПО ПОЗИЦИИ", M, y + 4, { characterSpacing: 2, lineBreak: false });
+    doc.font(F.semibold).fontSize(14).fillColor(INK);
+    const w = doc.widthOfString(pos.totalLine);
+    doc.text(pos.totalLine, PAGE_W - M - w, y, { lineBreak: false });
+    const rub = rublesTotalExact(input.price, input.deliveryCost, rate);
+    if (rub) {
+      doc.font(F.regular).fontSize(9).fillColor(GRAPHITE);
+      const rw = doc.widthOfString(rub);
+      doc.text(rub, PAGE_W - M - rw, y + 19, { lineBreak: false });
+    }
+    y += 46;
+  }
+
+  // terms
+  const terms: [string, string | undefined][] = [
+    ["Срок производства", input.productionTime],
+    ["Срок доставки до МСК", input.deliveryTime],
+    ["Объём груза", input.cargoVolume],
+    ["Вес груза", input.cargoWeight],
+  ];
+  const present = terms.filter(([, v]) => v) as [string, string][];
+  if (present.length) {
+    y += 6;
+    const colW = CW / 2;
+    present.forEach(([name, val], i) => {
+      const cx = M + (i % 2) * colW;
+      const cy = y + Math.floor(i / 2) * 46;
+      label(doc, name, cx, cy);
+      doc.font(F.regular).fontSize(11).fillColor(INK);
+      doc.text(val, cx, cy + 14, { width: colW - 16 });
+    });
+  }
+
+  footer(doc, FOOTER_LEFT, `${product.sku} · ${String(pageNo).padStart(2, "0")}`);
+}
+
+/** Summary table across all positions + grand totals. */
+function summaryPage(doc: Doc, ctx: MultiProposalContext, pageNo: number): number {
+  const rate = ctx.usdRub ?? 0;
+  doc.addPage({ size: "A4", margin: 0 });
+  eyebrow(doc, "04", template.sections.offer);
+
+  let y = 118;
+  doc.font(F.light).fontSize(26).fillColor(INK);
+  doc.text("Коммерческое предложение", M, y);
+  y += 40;
+  doc.font(F.regular).fontSize(9).fillColor(GREY);
+  doc.text(`${ctx.positions.length} позиции · ${ctx.date}`, M, y);
+  y += 40;
+
+  // header row
+  const xSku = M;
+  const xQty = M + 78;
+  const priceRight = PAGE_W - M - 92;
+  const deliveryRight = PAGE_W - M;
+  const hdr = (text: string, x: number, right = false) => {
+    doc.font(F.medium).fontSize(6.8).fillColor(GREY);
+    const w = right ? doc.widthOfString(text, { characterSpacing: 1.6 }) : 0;
+    doc.text(text.toUpperCase(), x - w, y, { characterSpacing: 1.6, lineBreak: false });
+  };
+  hdr("Артикул", xSku);
+  hdr("Количество", xQty);
+  hdr("Композиция", priceRight, true);
+  hdr("Доставка", deliveryRight, true);
+  y += 16;
+  hairline(doc, M, y, PAGE_W - M);
+  y += 12;
+
+  for (const p of ctx.positions) {
+    doc.font(F.medium).fontSize(11).fillColor(INK);
+    doc.text(p.product.sku, xSku, y, { lineBreak: false });
+
+    const qty = p.input.elementCount ?? "—";
+    doc.font(F.regular).fontSize(8.5).fillColor(GRAPHITE);
+    doc.text(qty, xQty, y + 1, { width: priceRight - xQty - 70, height: 22, ellipsis: true });
+
+    doc.font(F.regular).fontSize(10.5).fillColor(INK);
+    const price = p.input.price ?? "—";
+    const pw = doc.widthOfString(price);
+    doc.text(price, priceRight - pw, y, { lineBreak: false });
+
+    const del = p.input.deliveryCost ?? "—";
+    const dw = doc.widthOfString(del);
+    doc.text(del, deliveryRight - dw, y, { lineBreak: false });
+
+    y += 26;
+    hairline(doc, M, y - 8, PAGE_W - M);
+  }
+
+  // grand totals
+  const totalUsd = sumUsd(ctx.positions.flatMap((p) => [p.input.price, p.input.deliveryCost]));
+  y += 8;
+  doc.save().moveTo(M, y).lineTo(PAGE_W - M, y).lineWidth(1.2).strokeColor(BRASS).stroke().restore();
+  y += 14;
+
+  if (totalUsd) {
+    const usdText = formatMoney({ amount: totalUsd, currency: "USD" });
+    doc.font(F.medium).fontSize(8).fillColor(GREY);
+    doc.text("ИТОГО", M, y + 4, { characterSpacing: 2.4, lineBreak: false });
+    doc.font(F.medium).fontSize(12).fillColor(GRAPHITE);
+    const uw = doc.widthOfString(usdText);
+    doc.text(usdText, PAGE_W - M - uw, y, { lineBreak: false });
+    y += 30;
+
+    if (rate > 0) {
+      const rub = formatRub(totalUsd * rate);
+      doc.font(F.semibold).fontSize(9).fillColor(INK);
+      doc.text("ИТОГО К ОПЛАТЕ, ₽", M, y + 11, { characterSpacing: 2, lineBreak: false });
+      doc.font(F.semibold).fontSize(23).fillColor(INK);
+      const rw = doc.widthOfString(rub);
+      doc.text(rub, PAGE_W - M - rw, y, { lineBreak: false });
+      y += 50;
+    }
+  }
+
+  if (rate > 0) {
+    doc.font(F.regular).fontSize(7.6).fillColor(GREY);
+    const note = (template.rateNote as string).replace("{rate}", formatRate(rate));
+    doc.text(note, M, y - 6, { width: CW, lineGap: 2 });
+    y += measure(doc, note, F.regular, 7.6, CW, 2) + 8;
+  }
+
+  // delivery + payment panels, spilling to a continuation page when needed
+  const ha = halfAmountsOf(totalUsd, rate);
+  const schedule = ha
+    ? (template.paymentSchedule as string[]).map((s) =>
+        s.replace(/\{half\}/g, ha.half).replace(/\{rate\}/g, ha.rate).replace(/\{rub\}/g, ha.rub))
+    : undefined;
+
+  const gap = 18;
+  const dH = deliveryPanelHeight(doc);
+  const pH = paymentPanelHeight(doc, schedule);
+  const limit = PAGE_H - 54;
+  let extra = 0;
+  let py: number;
+  if (y + gap + dH + gap + pH <= limit) {
+    py = y + gap;
+  } else {
+    footer(doc, FOOTER_LEFT, `КП · ${String(pageNo).padStart(2, "0")}`);
+    doc.addPage({ size: "A4", margin: 0 });
+    eyebrow(doc, "04", template.sections.offer);
+    doc.font(F.light).fontSize(24).fillColor(INK);
+    doc.text("Доставка и условия оплаты", M, 118);
+    py = 174;
+    pageNo += 1;
+    extra = 1;
+  }
+  py = drawDeliveryPanel(doc, py) + gap;
+  drawPaymentPanel(doc, py, schedule);
+
+  footer(doc, FOOTER_LEFT, `КП · ${String(pageNo).padStart(2, "0")}`);
+  return 1 + extra;
+}
+
+/** Links for every position, grouped by composition. */
+function linksMultiPage(doc: Doc, ctx: MultiProposalContext, pageNo: number): void {
+  doc.addPage({ size: "A4", margin: 0 });
+  eyebrow(doc, "05", template.sections.links);
+
+  let y = 118;
+  doc.font(F.light).fontSize(26).fillColor(INK);
+  doc.text("Ссылки и материалы", M, y);
+  y += 40;
+  doc.font(F.regular).fontSize(9).fillColor(GREY);
+  doc.text("Нажмите на ссылку, чтобы открыть её в браузере", M, y);
+  y += 40;
+
+  for (const p of ctx.positions) {
+    doc.font(F.medium).fontSize(10.5).fillColor(INK);
+    doc.text(p.product.sku, M, y, { characterSpacing: 2, lineBreak: false });
+    y += 20;
+
+    label(doc, template.qrCaptions.product, M, y);
+    drawLink(doc, displayUrl(p.product.url), M, y + 13, p.product.url, { size: 11, underline: true });
+    y += 32;
+
+    if (p.product.model3dUrl) {
+      label(doc, template.qrCaptions.model3d, M, y);
+      drawLink(doc, displayUrl(p.product.model3dUrl), M, y + 13, p.product.model3dUrl, {
+        size: 11, underline: true,
+      });
+      y += 32;
+    }
+    hairline(doc, M, y + 2, PAGE_W - M);
+    y += 20;
+  }
+
+  // brand-wide links
+  doc.font(F.medium).fontSize(10.5).fillColor(INK);
+  doc.text("VARGOV®DESIGN", M, y, { characterSpacing: 2, lineBreak: false });
+  y += 20;
+  const VIDEO_LABEL: Record<string, string> = {
+    youtube: "Видео · YouTube",
+    rutube: "Видео · RuTube",
+    vimeo: "Видео · Vimeo",
+    other: "Видеотека Vargov®Design",
+  };
+  const brand: [string, string][] = [
+    [template.qrCaptions.site, template.websiteUrl],
+    ...(template.brandVideo as { url: string; kind: string }[]).map(
+      (v) => [VIDEO_LABEL[v.kind] ?? "Видео", v.url] as [string, string],
+    ),
+  ];
+  for (const [name, url] of brand) {
+    label(doc, name, M, y);
+    drawLink(doc, displayUrl(url), M, y + 13, url, { size: 11, underline: true });
+    y += 32;
+  }
+
+  footer(doc, FOOTER_LEFT, `КП · ${String(pageNo).padStart(2, "0")}`);
+}
+
+export async function buildMultiPdf(ctx: MultiProposalContext): Promise<string> {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  const skus = ctx.positions.map((p) => p.product.sku);
+  const name =
+    skus.length <= 4
+      ? skus.join("_")
+      : `${skus.slice(0, 3).join("_")}_и_ещё_${skus.length - 3}`;
+  const outFile = path.join(OUTPUT_DIR, `Commercial_Proposal_${name}.pdf`);
+
+  const doc = new PDFDocument({
+    size: "A4",
+    margin: 0,
+    autoFirstPage: false,
+    compress: true,
+    info: {
+      Title: `Vargov®Design — Коммерческое предложение (${skus.length} позиции)`,
+      Author: "Vargov®Design",
+      Subject: skus.join(", "),
+    },
+  });
+  for (const [n, file] of Object.entries(FONT_FILES)) doc.registerFont(n, file);
+
+  const stream = fs.createWriteStream(outFile);
+  doc.pipe(stream);
+
+  const rate = ctx.usdRub ?? 0;
+  const n = ctx.positions.length;
+  const countWord = `${n} ${pluralRu(n, "позиция", "позиции", "позиций")}`;
+  const skuLine = skus.join(" · ");
+  // short article lists read best as the headline; long ones move below it
+  const skusAsHeadline = skuLine.length <= 34;
+  coverCommon(doc, {
+    hero: ctx.positions[0].image,
+    eyebrow: `Коммерческое предложение · ${countWord}`,
+    big: skusAsHeadline ? skuLine : countWord,
+    bigSize: skusAsHeadline ? 28 : 44,
+    bigSpacing: skusAsHeadline ? 4 : 8,
+    subText: skusAsHeadline ? undefined : skuLine,
+    date: ctx.date,
+  });
+  companyPage(doc, "КП");
+
+  let pageNo = 3;
+  ctx.positions.forEach((p, i) => positionPage(doc, p, i, ctx.positions.length, rate, pageNo++));
+  pageNo += summaryPage(doc, ctx, pageNo);
+  linksMultiPage(doc, ctx, pageNo++);
+  contactsPage(doc);
+
+  doc.end();
+  await new Promise<void>((resolve, reject) => {
+    stream.on("finish", () => resolve());
+    stream.on("error", reject);
+  });
+  return outFile;
+}
+
 // ------------------------------------------------------------------ assembly
 
 export async function buildPdf(ctx: ProposalContext, qrs: QrAssets): Promise<string> {
@@ -577,13 +955,13 @@ export async function buildPdf(ctx: ProposalContext, qrs: QrAssets): Promise<str
   doc.pipe(stream);
 
   coverPage(doc, ctx);
-  companyPage(doc, ctx);
+  companyPage(doc, ctx.product.sku);
   let pageNo = 3;
   pageNo = photoPages(doc, ctx, pageNo);
   specsPage(doc, ctx, pageNo++);
   pageNo += offerPage(doc, ctx, pageNo);
   linksPage(doc, ctx, qrs, pageNo++);
-  contactsPage(doc, ctx, qrs);
+  contactsPage(doc);
 
   doc.end();
   await new Promise<void>((resolve, reject) => {

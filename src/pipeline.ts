@@ -5,10 +5,12 @@
 import { getProduct } from "./scrape.js";
 import { getUsdRubRate } from "./rate.js";
 import { downloadVideoThumb, prepareImages } from "./images.js";
-import { buildPdf, type QrAssets } from "./pdf/build.js";
+import { buildMultiPdf, buildPdf, type QrAssets } from "./pdf/build.js";
 import { formatDateRu, totalLine } from "./textutils.js";
 import { template } from "./config.js";
-import type { CommercialInput, ProposalContext, VideoLink } from "./types.js";
+import type {
+  CommercialInput, MultiProposalContext, Position, ProposalContext, VideoLink,
+} from "./types.js";
 
 export interface GenerateResult {
   file: string;
@@ -16,6 +18,8 @@ export interface GenerateResult {
   title: string;
   photos: number;
   videos: number;
+  /** Number of compositions in the document (1 for a single-item proposal). */
+  positions: number;
 }
 
 type Logger = (msg: string) => void;
@@ -76,5 +80,56 @@ export async function generateProposal(
     title: product.title,
     photos: images.length,
     videos: product.videos.length,
+    positions: 1,
+  };
+}
+
+/**
+ * Multi-position proposal: every composition gets its own page, followed by a
+ * summary table with the grand total. Falls through to the single-item layout
+ * when only one position was given.
+ */
+export async function generateProposals(
+  inputs: CommercialInput[],
+  opts: { refresh?: boolean; log?: Logger } = {},
+): Promise<GenerateResult> {
+  if (inputs.length <= 1) return generateProposal(inputs[0], opts);
+
+  const log = opts.log ?? (() => {});
+  log(`Позиций в предложении: ${inputs.length}`);
+
+  const positions: Position[] = [];
+  for (const input of inputs) {
+    log(`Получаю данные о композиции ${input.sku}…`);
+    const product = await getProduct(input.sku, { refresh: opts.refresh });
+    const images = await prepareImages(input.sku, product.gallery.slice(0, 1), 1);
+    if (!images.length) {
+      throw new Error(`Не удалось подготовить изображение композиции ${input.sku}.`);
+    }
+    positions.push({
+      input,
+      product,
+      image: images[0],
+      totalLine: totalLine(input.price, input.deliveryCost),
+    });
+  }
+
+  const rate = await getUsdRubRate({ refresh: opts.refresh, log });
+
+  const ctx: MultiProposalContext = {
+    positions,
+    usdRub: rate.usdRub,
+    date: formatDateRu(),
+  };
+
+  log("Собираю PDF…");
+  const file = await buildMultiPdf(ctx);
+  return {
+    file,
+    sku: positions.map((p) => p.product.sku).join(", "),
+    title: `${positions.length} позиции`,
+    photos: positions.length,
+    videos: 0,
+    positions: positions.length,
   };
 }

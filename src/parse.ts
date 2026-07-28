@@ -27,7 +27,9 @@ type Key = keyof CommercialInput;
  * more specific patterns first.
  */
 const LABELS: [RegExp, Key][] = [
-  [/^(?:композиция|артикул|модель)\b/i, "sku"],
+  // NB: no \b here — JS word boundaries key off [A-Za-z0-9_], so \b never
+  // matches after a Cyrillic letter and the label would silently miss.
+  [/^(?:композиция|артикул|модель)(?:\s|$)/i, "sku"],
   [/^размер\s+композиции/i, "compositionSize"],
   [/^размер\s+элемент/i, "elementSize"],
   [/^кол(?:-?во|ичество)?\s*элемент/i, "elementCount"],
@@ -50,6 +52,46 @@ const CARGO_WT = /([\d.,]+\s*(?:кг|kg|тонн[а-яё]*|т(?![а-яё])))/i;
 function matchLabel(label: string): Key | undefined {
   for (const [re, key] of LABELS) if (re.test(label)) return key;
   return undefined;
+}
+
+/**
+ * Split a pasted text into one block per composition and parse each.
+ *
+ * A new position starts at every «Композиция:» / «Артикул:» line, so blocks may
+ * be separated by blank lines or follow each other directly. Always returns at
+ * least one entry (throws only when no SKU can be found at all).
+ */
+export function parseBlocks(text: string): CommercialInput[] {
+  const lines = text.split(/\r?\n/);
+  const chunks: string[][] = [];
+  let current: string[] = [];
+
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    const isStart =
+      colon >= 0 && matchLabel(line.slice(0, colon).trim()) === "sku";
+    if (isStart && current.some((l) => l.trim())) {
+      chunks.push(current);
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.some((l) => l.trim())) chunks.push(current);
+
+  const parsed = chunks
+    .map((c) => c.join("\n"))
+    .filter((c) => c.trim())
+    .map((c) => {
+      try {
+        return parseBlock(c);
+      } catch {
+        return undefined; // chunk without a SKU (stray notes) — skip it
+      }
+    })
+    .filter((v): v is CommercialInput => !!v);
+
+  if (!parsed.length) return [parseBlock(text)]; // let parseBlock raise its error
+  return parsed;
 }
 
 export function parseBlock(text: string): CommercialInput {

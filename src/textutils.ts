@@ -149,6 +149,30 @@ export function formatRate(usdRub: number): string {
   return usdRub.toFixed(2).replace(".", ",");
 }
 
+/** Russian plural: pluralRu(3, "позиция", "позиции", "позиций") -> "позиции". */
+export function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod100 = Math.abs(n) % 100;
+  const mod10 = mod100 % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+/** Sum any number of money strings; returns undefined unless all are USD. */
+export function sumUsd(values: (string | undefined)[]): number | undefined {
+  let total = 0;
+  let seen = false;
+  for (const v of values) {
+    const m = parseMoney(v);
+    if (!m) continue;
+    if (m.currency !== "USD") return undefined;
+    total += m.amount;
+    seen = true;
+  }
+  return seen ? total : undefined;
+}
+
 const NUM_FMT = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 
 /**
@@ -164,7 +188,16 @@ export function halfAmounts(
   if (!p || p.currency !== "USD" || !(usdRub > 0)) return undefined;
   const d = parseMoney(delivery);
   const total = p.amount + (d && d.currency === "USD" ? d.amount : 0);
-  const half = total / 2;
+  return halfAmountsOf(total, usdRub);
+}
+
+/** Same schedule maths from an already-summed USD total (multi-position). */
+export function halfAmountsOf(
+  totalUsd: number | undefined,
+  usdRub: number,
+): { half: string; rub: string; rate: string } | undefined {
+  if (!totalUsd || !(usdRub > 0)) return undefined;
+  const half = totalUsd / 2;
   return {
     half: NUM_FMT.format(half),
     rub: NUM_FMT.format(Math.round(half * usdRub)),

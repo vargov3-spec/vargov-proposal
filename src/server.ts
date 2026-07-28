@@ -11,8 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import { BRAND_DIR, FONTS_DIR, TEMPLATES_DIR } from "./config.js";
-import { parseBlock } from "./parse.js";
-import { generateProposal } from "./pipeline.js";
+import { parseBlocks } from "./parse.js";
+import { generateProposals } from "./pipeline.js";
 
 const PORT = Number(process.env.PORT ?? 8815);
 const HOST = process.env.HOST ?? "0.0.0.0"; // listen on all interfaces so phones on the LAN can reach it
@@ -55,16 +55,17 @@ app.post("/generate", async (req, res) => {
     return res.status(400).json({ error: "Пустые данные. Вставьте параметры композиции." });
   }
 
-  let input;
+  let inputs;
   try {
-    input = parseBlock(data);
+    inputs = parseBlocks(data);
   } catch (e) {
     return res.status(400).json({ error: (e as Error).message });
   }
 
+  const tag = inputs.map((i) => i.sku).join(",");
   try {
     const result = await serialize(() =>
-      generateProposal(input, { refresh: Boolean(refresh), log: (m) => console.log(`[${input.sku}] ${m}`) }),
+      generateProposals(inputs, { refresh: Boolean(refresh), log: (m) => console.log(`[${tag}] ${m}`) }),
     );
     const buffer = fs.readFileSync(result.file);
     const filename = path.basename(result.file);
@@ -72,7 +73,11 @@ app.post("/generate", async (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     res.setHeader(
       "X-Proposal-Info",
-      encodeURIComponent(`${result.title} · фото ${result.photos} · видео ${result.videos}`),
+      encodeURIComponent(
+        result.positions > 1
+          ? `${result.positions} позиции · ${result.sku}`
+          : `${result.title} · фото ${result.photos} · видео ${result.videos}`,
+      ),
     );
     return res.send(buffer);
   } catch (e) {
