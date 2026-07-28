@@ -87,8 +87,7 @@
     "lines": [
       { "label": "Сайт", "value": "vargov.ru", "url": "https://vargov.ru" },
       { "label": "Email", "value": "info@vargov.ru", "url": "mailto:info@vargov.ru" },
-      { "label": "Телефон", "value": "+7 916 537 33 52", "url": "tel:+79165373352" },
-      { "label": "WhatsApp", "value": "+7 916 537 33 52", "url": "https://wa.me/79165373352" },
+      { "label": "WhatsApp · телефон", "value": "+7 916 537 33 52", "url": "https://wa.me/79165373352" },
       { "label": "Telegram", "value": "@AntonVargov", "url": "https://t.me/AntonVargov" },
       { "label": "Telegram бренда", "value": "@vargov_design", "url": "https://t.me/vargov_design" },
       { "label": "WeChat", "value": "Vargov_Design" }
@@ -99,6 +98,7 @@
       { "label": "RuTube", "value": "Vargov Design", "url": "https://rutube.ru/channel/38329605/" },
       { "label": "3D-конфигуратор", "value": "configurator.vargov.ru", "url": "https://configurator.vargov.ru/" }
     ],
-    "showroom": "Официальный шоу-рум — Москва, Нахимовский проспект 24, павильон 2, стенд 212 · ежедневно 12:00–20:00"
+    "showroom": "Официальный шоу-рум — Москва, Нахимовский проспект 24, павильон 2, стенд 212 · ежедневно 12:00–20:00",
+    "showroomPhone": { "label": "Телефон шоу-рума", "value": "+7 (925) 888-77-44", "url": "tel:+79258887744" }
   }
 }

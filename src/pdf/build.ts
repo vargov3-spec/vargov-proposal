@@ -581,6 +581,18 @@ function contactsPage(doc: Doc): void {
   y += 6;
   doc.font(F.regular).fontSize(8.5).fillColor(GRAPHITE);
   doc.text(c.showroom as string, M, y, centered);
+  y += measure(doc, c.showroom as string, F.regular, 8.5, CW) + 8;
+
+  const sp = c.showroomPhone as ContactLine | undefined;
+  if (sp) {
+    doc.font(F.medium).fontSize(6.6).fillColor(GREY);
+    doc.text(sp.label.toUpperCase(), M, y, { ...centered, characterSpacing: 2 });
+    if (sp.url) drawLink(doc, sp.value, M, y + 11, sp.url, { size: 10.5, center: true });
+    else {
+      doc.font(F.regular).fontSize(10.5).fillColor(INK);
+      doc.text(sp.value, M, y + 11, centered);
+    }
+  }
 
   const by = PAGE_H - 56;
   hairline(doc, M, by, PAGE_W - M);
