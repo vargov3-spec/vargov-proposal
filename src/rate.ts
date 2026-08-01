@@ -24,6 +24,15 @@ import { CACHE_DIR, USER_AGENT, template } from "./config.js";
 const CACHE_FILE = path.join(CACHE_DIR, "rate.json");
 /** A cached rate is only a safety net when the site is unreachable. */
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Authoritative source: the site's own endpoint, which returns {"usd":"82.5"}.
+ * The header markup is NOT reliable on its own — vargov.ru is a Next.js app and
+ * server-renders a cached rate (e.g. 81.7) that the browser then replaces with
+ * the live value from this API. Reading only the HTML quotes a stale rate.
+ */
+const RATE_API_URLS = ["https://vargov.ru/api/usd-rate", "https://www.vargov.ru/api/usd-rate"];
+/** Fallback source: the rendered homepage (may lag behind the API). */
 const HOMEPAGE_URLS = ["https://vargov.ru/", "https://www.vargov.ru/"];
 
 export interface Rate {
@@ -89,12 +98,12 @@ export function parseRate(html: string): number | undefined {
   return undefined;
 }
 
-async function fetchOnce(url: string, timeoutMs: number): Promise<number | undefined> {
+async function httpGet(url: string, accept: string, timeoutMs: number): Promise<string> {
   const res = await fetch(url, {
     redirect: "follow",
     headers: {
       "User-Agent": USER_AGENT,
-      Accept: "text/html,application/xhtml+xml",
+      Accept: accept,
       "Accept-Language": "ru-RU,ru;q=0.9",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
@@ -102,19 +111,46 @@ async function fetchOnce(url: string, timeoutMs: number): Promise<number | undef
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const rate = parseRate(await res.text());
-  if (!rate) throw new Error("курс не найден в HTML");
-  return rate;
+  return res.text();
 }
 
-/** Try every host spelling, twice, before giving up. */
+/** Read {"usd":"82.5"} (also tolerates {rate|value|usdRub} or a bare number). */
+export function parseRateJson(body: string): number | undefined {
+  try {
+    const data = JSON.parse(body) as unknown;
+    const raw =
+      typeof data === "number" || typeof data === "string"
+        ? data
+        : (data as Record<string, unknown>)?.usd ??
+          (data as Record<string, unknown>)?.usdRub ??
+          (data as Record<string, unknown>)?.rate ??
+          (data as Record<string, unknown>)?.value;
+    if (raw === undefined || raw === null) return undefined;
+    return toNumber(String(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+/** API first (live), then the rendered homepage; each host spelling, twice. */
 async function fetchLive(): Promise<{ rate?: number; error?: string }> {
   const errors: string[] = [];
+
   for (let attempt = 1; attempt <= 2; attempt++) {
+    for (const url of RATE_API_URLS) {
+      try {
+        const rate = parseRateJson(await httpGet(url, "application/json", 12_000));
+        if (rate) return { rate };
+        throw new Error("курс не найден в ответе API");
+      } catch (e) {
+        errors.push(`${url}: ${(e as Error).message}`);
+      }
+    }
     for (const url of HOMEPAGE_URLS) {
       try {
-        const rate = await fetchOnce(url, 15_000);
+        const rate = parseRate(await httpGet(url, "text/html,application/xhtml+xml", 15_000));
         if (rate) return { rate };
+        throw new Error("курс не найден в HTML");
       } catch (e) {
         errors.push(`${url}: ${(e as Error).message}`);
       }
