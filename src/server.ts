@@ -13,6 +13,7 @@ import express from "express";
 import { BRAND_DIR, FONTS_DIR, TEMPLATES_DIR } from "./config.js";
 import { parseBlocks } from "./parse.js";
 import { generateProposals } from "./pipeline.js";
+import { getUsdRubRate } from "./rate.js";
 
 const PORT = Number(process.env.PORT ?? 8815);
 const HOST = process.env.HOST ?? "0.0.0.0"; // listen on all interfaces so phones on the LAN can reach it
@@ -39,6 +40,19 @@ app.get("/logo.svg", (_req, res) => {
 });
 
 app.use("/fonts", express.static(FONTS_DIR, { maxAge: "7d", immutable: true }));
+
+/**
+ * Diagnostics: what rate would this instance quote right now, and where did it
+ * come from? Makes a silent fallback visible instead of guessable.
+ */
+app.get("/rate", async (_req, res) => {
+  try {
+    const rate = await getUsdRubRate({ log: (m) => console.log(`[rate] ${m}`) });
+    res.json(rate);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
 
 // Playwright launches are heavy — serialize generation so concurrent requests
 // don't fight over the browser and the per-SKU cache.

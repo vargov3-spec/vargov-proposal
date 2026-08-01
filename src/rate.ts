@@ -1,32 +1,37 @@
 /**
  * Vargov®Design internal USD→RUB rate.
  *
- * The company publishes one internal rate in the vargov.ru header — currently
- * rendered as "USD 81.1" with the note «Внутренний курс компании, обновляется
- * автоматически ежедневно в 12:00 по МСК».
+ * The company publishes one internal rate in the vargov.ru header — rendered as
+ * e.g. "USD 82.5" next to «Внутренний курс компании, обновляется автоматически
+ * ежедневно в 12:00 по МСК». The value sits in the server-rendered HTML, so a
+ * plain HTTPS request is enough (no browser needed in the cloud build).
  *
- * The value is present in the server-rendered HTML, so a plain HTTPS request is
- * enough (works in the browser-free cloud build).
+ * Freshness policy — a proposal must quote the current rate, so every
+ * generation asks the site first:
+ *   1. live fetch (retried, several host spellings)
+ *   2. cached value, if a recent one exists
+ *   3. the value baked into proposal.json, with a loud warning
  *
- * Parsing is deliberately markup-agnostic: the HTML is stripped to plain text
- * first, then the number is read next to "USD" (or near the word «курс»). An
- * earlier version keyed off a specific `<strong>` wrapper and silently fell back
- * to a hard-coded rate once the site was redesigned — hence the tag-free
- * approach and the loud warning when a live read fails.
+ * Parsing is markup-agnostic on purpose: the HTML is stripped to plain text and
+ * the number is read next to "USD" (or near «курс»). An earlier version keyed
+ * off a specific <strong> wrapper and silently served a stale fallback once the
+ * site was redesigned.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { CACHE_DIR, USER_AGENT, template } from "./config.js";
 
 const CACHE_FILE = path.join(CACHE_DIR, "rate.json");
-/** The site refreshes the rate daily at 12:00 MSK — keep our copy fresh. */
-const MAX_AGE_MS = 60 * 60 * 1000; // 1h
-const HOMEPAGE = "https://vargov.ru/";
+/** A cached rate is only a safety net when the site is unreachable. */
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const HOMEPAGE_URLS = ["https://vargov.ru/", "https://www.vargov.ru/"];
 
 export interface Rate {
   usdRub: number;
   source: "live" | "cache" | "fallback";
   fetchedAt: string;
+  /** Why the live read failed (diagnostics only). */
+  error?: string;
 }
 
 function fallbackRate(): number {
@@ -56,7 +61,7 @@ const AMOUNT = "(\\d{2,3}(?:\\s*[.,]\\s*\\d{1,2})?)";
 export function parseRate(html: string): number | undefined {
   const text = stripTags(html);
 
-  // 1) the canonical form on the site: "USD 81.1" (previously "USD 79.50")
+  // 1) the canonical form on the site: "USD 82.5"
   const direct = text.match(new RegExp(`USD\\s*${AMOUNT}`, "i"));
   if (direct) {
     const v = toNumber(direct[1]);
@@ -77,67 +82,101 @@ export function parseRate(html: string): number | undefined {
     }
   }
 
-  // 3) last resort: "$ 81.1" anywhere
+  // 3) last resort: "$ 82.5" anywhere
   const dollar = text.match(new RegExp(`\\$\\s*${AMOUNT}`));
   if (dollar) return toNumber(dollar[1]);
 
   return undefined;
 }
 
-async function fetchLive(): Promise<number | undefined> {
-  try {
-    const res = await fetch(HOMEPAGE, {
-      headers: { "User-Agent": USER_AGENT, "Cache-Control": "no-cache" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) return undefined;
-    return parseRate(await res.text());
-  } catch {
-    return undefined;
+async function fetchOnce(url: string, timeoutMs: number): Promise<number | undefined> {
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      "User-Agent": USER_AGENT,
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "ru-RU,ru;q=0.9",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const rate = parseRate(await res.text());
+  if (!rate) throw new Error("курс не найден в HTML");
+  return rate;
+}
+
+/** Try every host spelling, twice, before giving up. */
+async function fetchLive(): Promise<{ rate?: number; error?: string }> {
+  const errors: string[] = [];
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    for (const url of HOMEPAGE_URLS) {
+      try {
+        const rate = await fetchOnce(url, 15_000);
+        if (rate) return { rate };
+      } catch (e) {
+        errors.push(`${url}: ${(e as Error).message}`);
+      }
+    }
+    if (attempt === 1) await new Promise((r) => setTimeout(r, 800));
   }
+  return { error: [...new Set(errors)].join(" | ") };
 }
 
 function readCache(): Rate | undefined {
   try {
     const c = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8")) as Rate;
-    if (c.usdRub && Date.now() - new Date(c.fetchedAt).getTime() < MAX_AGE_MS) return c;
+    if (c.usdRub && Date.now() - new Date(c.fetchedAt).getTime() < CACHE_MAX_AGE_MS) return c;
   } catch {
     /* no cache */
   }
   return undefined;
 }
 
-export async function getUsdRubRate(
-  opts: { refresh?: boolean; log?: (m: string) => void } = {},
-): Promise<Rate> {
-  const log = opts.log ?? (() => {});
-  if (!opts.refresh) {
-    const cached = readCache();
-    if (cached) {
-      log(`Внутренний курс из кэша: 1 USD = ${cached.usdRub} ₽`);
-      return { ...cached, source: "cache" };
-    }
-  }
-
-  const live = await fetchLive();
-  const rate: Rate = live
-    ? { usdRub: live, source: "live", fetchedAt: new Date().toISOString() }
-    : { usdRub: fallbackRate(), source: "fallback", fetchedAt: new Date().toISOString() };
-
-  if (rate.source === "live") {
-    log(`Внутренний курс с vargov.ru: 1 USD = ${rate.usdRub} ₽`);
-  } else {
-    log(
-      `ВНИМАНИЕ: не удалось прочитать курс с vargov.ru — использую запасное значение ` +
-        `1 USD = ${rate.usdRub} ₽. Проверьте, не изменилась ли вёрстка сайта.`,
-    );
-  }
-
+function writeCache(rate: Rate): void {
   try {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
     fs.writeFileSync(CACHE_FILE, JSON.stringify(rate, null, 2), "utf-8");
   } catch {
     /* cache write is best-effort */
   }
+}
+
+export async function getUsdRubRate(
+  opts: { log?: (m: string) => void } = {},
+): Promise<Rate> {
+  const log = opts.log ?? (() => {});
+
+  // 1) always ask the site first — a proposal must quote the current rate
+  const live = await fetchLive();
+  if (live.rate) {
+    const rate: Rate = { usdRub: live.rate, source: "live", fetchedAt: new Date().toISOString() };
+    log(`Внутренний курс с vargov.ru: 1 USD = ${rate.usdRub} ₽`);
+    writeCache(rate);
+    return rate;
+  }
+
+  // 2) recent cached value
+  const cached = readCache();
+  if (cached) {
+    log(
+      `ВНИМАНИЕ: сайт недоступен (${live.error}) — беру курс из кэша ` +
+        `от ${cached.fetchedAt}: 1 USD = ${cached.usdRub} ₽`,
+    );
+    return { ...cached, source: "cache", error: live.error };
+  }
+
+  // 3) value from the template
+  const rate: Rate = {
+    usdRub: fallbackRate(),
+    source: "fallback",
+    fetchedAt: new Date().toISOString(),
+    error: live.error,
+  };
+  log(
+    `ВНИМАНИЕ: курс с vargov.ru получить не удалось (${live.error}) — ` +
+      `использую запасное значение 1 USD = ${rate.usdRub} ₽`,
+  );
   return rate;
 }

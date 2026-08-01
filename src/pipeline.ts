@@ -53,7 +53,7 @@ export async function generateProposal(
     if (v.id) v.thumbFile = await downloadVideoThumb(input.sku, v.kind, v.id, v.url);
   }
 
-  const rate = await getUsdRubRate({ refresh: opts.refresh, log });
+  const rate = await getUsdRubRate({ log });
 
   const qrs: QrAssets = {
     product: product.url,
@@ -114,7 +114,7 @@ export async function generateProposals(
     });
   }
 
-  const rate = await getUsdRubRate({ refresh: opts.refresh, log });
+  const rate = await getUsdRubRate({ log });
 
   const ctx: MultiProposalContext = {
     positions,
